@@ -4,7 +4,7 @@ options(mc.cores = parallel::detectCores())
 library(dplyr)
 library(ggplot2)
 
-SR <- read.csv("Harrison_simples_Apr18.csv")
+SR <- read.csv("demo-data.csv")
 SR$S_adj <- SR$S_adj/1000
 SR$R <- SR$R/1000
 

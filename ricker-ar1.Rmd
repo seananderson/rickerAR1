@@ -24,7 +24,7 @@ library(ggplot2)
 Read the data and fit a simple linear regression model:
 
 ```{r data}
-SR <- read.csv("Harrison_simples_Apr18.csv")
+SR <- read.csv("demo-data.csv")
 SR$S_adj <- SR$S_adj / 1000 # to avoid huge numbers
 SR$R <- SR$R / 1000 # to avoid huge numbers
 dat <- list(obs_logR = log(SR$R), obs_S = SR$S_adj, N = length(SR$S_adj))
