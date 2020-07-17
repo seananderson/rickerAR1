@@ -49,12 +49,11 @@ generated quantities {
     ppd_pred_logRS[i] = alpha - beta * obs_S[i];
     if (i == 1 || !use_ar1) {
       ppd_obs_logRS[i] = normal_rng(ppd_pred_logRS[i], sigma_obs);
-      ppd_obs_logR[i] = ppd_obs_logRS[i] + log(obs_S[i]);
     } else {
       ppd_obs_logRS[i] = ppd_pred_logRS[i] + eps[i-1] * rho;
       ppd_obs_logRS[i] = normal_rng(ppd_obs_logRS[i], sqrt(1 - rho^2) * sigma_obs);
-      ppd_obs_logR[i] = ppd_obs_logRS[i] + log(obs_S[i]);
     }
+    ppd_obs_logR[i] = ppd_obs_logRS[i] + log(obs_S[i]);
     ppd_eps[i] = ppd_obs_logRS[i] - ppd_pred_logRS[i];
   }
   umsy = 0.5 * alpha - 0.07 * (alpha^2);
