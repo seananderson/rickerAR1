@@ -1,0 +1,248 @@
+---
+title: "Ricker AR1"
+author: "Sean Anderson"
+date: "2020-07-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE, message = FALSE,
+  cache = TRUE, autodep = TRUE, collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r libs}
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+library(dplyr)
+library(ggplot2)
+```
+
+Read the data and fit a simple linear regression model:
+
+```{r data}
+SR <- read.csv("Harrison_simples_Apr18.csv")
+SR$S_adj <- SR$S_adj / 1000 # to avoid huge numbers
+SR$R <- SR$R / 1000 # to avoid huge numbers
+dat <- list(obs_logR = log(SR$R), obs_S = SR$S_adj, N = length(SR$S_adj))
+# 2000 usually enough, but comparing small diffs here and Smsy has heavy tails
+ITER <- 6000
+
+srm <- lm(log(SR$R / SR$S_adj) ~ SR$S_adj)
+(a_srm <- srm$coefficients[1])
+(b_srm <- -srm$coefficients[2])
+summary(srm)
+```
+
+Let's start with two simple Ricker models. The first is parameterized as `eps ~ normal(0, sigma)`, which creates a needed Jacobian transformation and introduces slight (barely perceptible here) bias. The second version avoids this.
+
+```{r rick}
+rick <- suppressMessages(stan_model("ricker.stan"))
+rick1 <- suppressMessages(stan_model("ricker1.stan"))
+```
+
+```{r rickprint}
+writeLines(readLines("ricker.stan"))
+writeLines(readLines("ricker1.stan"))
+```
+
+Find the MAP estimate:
+
+```{r m0map}
+m0_map <- optimizing(rick1,
+  data = dat,
+  init = list(alpha = a_srm, beta = b_srm, sigma_obs = 0.8)
+)
+m0_map$par["alpha"]
+m0_map$par["beta"]
+m0_map$par["sigma_obs"]
+```
+
+Now sample with MCMC.
+
+`suppressMessages()` is just to avoid some extra messages from my configuation of rstan/C++ compiler appearing in the Knitr output; not usually needed. Likewise, `refresh = 0` is just for knitr.
+
+```{r m0}
+# avoid sampling problems; I think with tiny beta's:
+ctrl <- list(adapt_delta = 0.99)
+pars <- c("alpha", "beta", "sigma_obs", "rho")
+
+m0 <- suppressMessages(sampling(rick1, data = dat, control = ctrl, iter = ITER, refresh = 0))
+print(m0, pars = c("alpha", "beta", "sigma_obs"))
+```
+
+Now a sequence of AR1 models.
+
+First, two models coded with `delta` as written in the Thorson et al. CJFAS paper.
+Note that these generate a (legitimate) warning:
+
+```
+Left-hand side of sampling statement (~) may contain a non-linear transform of a parameter or local variable.
+If it does, you need to include a target += statement with the log absolute determinant of the Jacobian of the transform.
+Left-hand-side of sampling statement:
+    delta ~ normal(...)
+```
+
+and it would be nontrivial to account for this since multiple variables are being transformed into `delta`. I do not know if this is how Jim coded it (code not available), but if so, it likely introduces a bit of bias.
+
+The two models are just different versions of the same thing, with the second using an intermediate `eps` calculation.
+
+Note that these models model the Gaussian error as around log(R/S), which I missed at first since the text says "epsilon are observed residuals around the stock-recruitment curve", making me think this was around log(R), and the use of L and Lhat for log(R/S) endlessly confused me.
+
+```{r m2print}
+writeLines(readLines("ricker_auto1.stan"))
+```
+
+```{r m1m2}
+m1 <- suppressMessages(stan("ricker_auto.stan", data = dat, control = ctrl, iter = ITER, refresh = 0))
+print(m1, pars = pars)
+
+m2 <- suppressMessages(stan("ricker_auto1.stan", data = dat, control = ctrl, iter = ITER, refresh = 0))
+print(m2, pars = pars)
+```
+
+Now two versions that should mimic the one Catarina put together based on Carrie's code. The two are just variants of the same thing.
+
+Here I start including a posterior predictive distribution (PPD) section in the generated quantities for model checking later.
+
+```{r m4print}
+writeLines(readLines("ricker_auto3.stan"))
+```
+
+```{r m3m4}
+m3 <- suppressMessages(stan("ricker_auto2.stan", data = dat, control = ctrl, iter = ITER, refresh = 0))
+print(m3, pars = pars)
+
+m4 <- suppressMessages(stan("ricker_auto3.stan", data = dat, control = ctrl, iter = ITER, refresh = 0))
+print(m4, pars = pars)
+```
+
+Proof that the MAP estimate agrees with the TMB version!
+
+(They used to be exact, but now there are weakly informative priors.)
+
+```{r m4map}
+ricker_auto3 <- suppressMessages(stan_model("ricker_auto3.stan"))
+m4_map <- optimizing(ricker_auto3,
+  data = dat,
+  init = list(alpha = a_srm, beta = b_srm, sigma_obs = 0.8, rho = 0.3)
+)
+m4_map$par["alpha"]
+m4_map$par["beta"]
+m4_map$par["sigma_obs"]
+m4_map$par["rho"]
+```
+
+At this point I realized that the Carrie/Catarina version was putting error on log(R) instead of log(R/S). I believe both are legitimate. But, here are some versions that put the error on log(R/S) instead and avoid the transformation of variables problem in Jim's parameterization:
+
+```{r m5print}
+writeLines(readLines("ricker_auto4.stan"))
+```
+
+```{r m5}
+m5 <- suppressMessages(stan("ricker_auto4.stan", data = dat, control = ctrl, iter = ITER, refresh = 0))
+print(m5, pars = pars)
+```
+
+That model was coded logically, but not efficiently. Here's a more elegant coding. It splits the model into `transformed parameters`, which can be monitored, and vectorizes the data likelihood statement for more efficient sampling. Also, I added a data element to turn the AR1 on or off.
+
+```{r m6print}
+writeLines(readLines("ricker_auto5.stan"))
+```
+
+```{r}
+m6 <- suppressMessages(stan("ricker_auto5.stan", data = c(dat, use_ar1 = 1), iter = ITER, control = ctrl, refresh = 0))
+print(m6, pars = pars)
+
+m7 <- suppressMessages(stan("ricker_auto5.stan", data = c(dat, use_ar1 = 0), iter = ITER, control = ctrl, refresh = 0))
+print(m7, pars = pars)
+```
+
+Let's compare the various models.
+
+```{r post-compare}
+models <- list(
+  thorson_literal_ar1 = m1,
+  holt_wor_ar1 = m4,
+  sr_ar1 = m6,
+  sr_iid = m7
+)
+
+post <- purrr::map_dfr(models,
+  ~ tidybayes::gather_draws(.x, alpha, beta, sigma_obs, rho),
+  .id = "model"
+) %>%
+  filter(!(.variable == "rho" & model == "sr_iid"))
+
+ggplot(post, aes(.value, fill = model, colour = model)) +
+  geom_density(alpha = 0.25) +
+  facet_wrap(~.variable, scales = "free") +
+  theme_light() +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_colour_brewer(palette = "Dark2")
+```
+
+Draws from the posterior mean predictions overlaid on the data:
+
+```{r post-mean-pred}
+p <- extract(m5)
+S <- seq(min(SR$S_adj), max(SR$S_adj), length.out = 100)
+R_hat <- matrix(ncol = length(S), nrow = 600)
+for (i in seq_len(nrow(R_hat))) {
+  for (s in seq_along(S)) {
+    R_hat[i, s] <- exp(p$alpha[i] - p$beta[i] * S[s] + log(S[s]))
+  }
+}
+matplot(S, t(R_hat), type = "l", col = "#00000015", lty = 1)
+points(SR$S_adj, SR$R)
+```
+
+Let's look at the posterior predictive distributions. If the model is a good representation of the observed data, the observed data should be indistinguishable from a random simulation from the posterior predictive distribution. These, of course, use the observed `S`. Another test would be for simulated `S`.
+
+```{r, ppd}
+SR <- mutate(SR, obs = as.factor(seq_len(n())))
+
+tidybayes::gather_draws(models$sr_ar1, ppd_obs_logR[obs]) %>%
+  mutate(R_ppd = exp(.value)) %>%
+  ggplot(aes(as.factor(obs), log(R_ppd))) +
+  geom_violin() +
+  geom_point(data = SR, mapping = aes(x = obs, y = log(R))) +
+  theme_light()
+
+set.seed(123)
+DRAWS <- sample(1:500, 24)
+make_ppd_plot <- function(model) {
+  tidybayes::gather_draws(model, ppd_obs_logR[obs]) %>%
+    mutate(R_ppd = exp(.value), obs = as.factor(obs)) %>%
+    left_join(SR, by = "obs") %>%
+    filter(.iteration %in% DRAWS, .chain == 1) %>%
+    mutate(type = "PPD") %>%
+    bind_rows(
+      tibble(
+        obs = SR$obs, .iteration = 99999,
+        R_ppd = SR$R, S_adj = SR$S_adj, type = "Real"
+      )
+    ) %>%
+    ggplot(aes(S_adj, R_ppd)) +
+    geom_point(aes(shape = type)) +
+    geom_line() +
+    facet_wrap(~.iteration, scales = "free_y") +
+    theme_light() +
+    scale_shape_manual(values = c("PPD" = 21, "Real" = 19))
+}
+make_ppd_plot(models$holt_wor_ar1)
+make_ppd_plot(models$sr_iid)
+make_ppd_plot(models$sr_ar1)
+```
+
+Corresponding parameter estimates for the last one for comparison:
+
+```{r sampled-post, results='asis'}
+tidybayes::spread_draws(models$sr_ar1, alpha, beta, rho, sigma_obs) %>%
+  filter(.iteration %in% DRAWS, .chain == 1) %>%
+  select(-.chain, -.draw) %>%
+  knitr::kable(digits = 2)
+```

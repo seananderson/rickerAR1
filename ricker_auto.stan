@@ -28,8 +28,8 @@ transformed parameters {
 model {
   delta ~ normal(0, sigma_obs);
   // priors:
-  sigma_obs ~ normal(0, 10);
-  alpha ~ normal(0, 50);
-  beta ~ normal(0, 50);
-  rho ~ normal(0, 3);
+  sigma_obs ~ normal(0, 3);
+  alpha ~ normal(0, 10);
+  beta ~ normal(0, 10);
+  rho ~ normal(0, 2);
 }

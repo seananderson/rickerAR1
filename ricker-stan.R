@@ -1,6 +1,8 @@
 library(rstan)
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
+library(dplyr)
+library(ggplot2)
 
 SR <- read.csv("Harrison_simples_Apr18.csv")
 SR$S_adj <- SR$S_adj/1000
@@ -24,27 +26,29 @@ m0_map$par["alpha"]
 m0_map$par["beta"]
 m0_map$par["sigma_obs"]
 
-m0 <- sampling(rick, data = dat, control = list(adapt_delta = 0.99), iter = 20000)
+ctrl <- list(adapt_delta = 0.99)
+pars <- c("alpha", "beta", "sigma_obs", "rho")
+
+m0 <- sampling(rick, data = dat, control = ctrl, iter = 4000)
 print(m0, pars = c("alpha", "beta", "sigma_obs"))
 
-m0.1 <- sampling(rick1, data = dat, control = list(adapt_delta = 0.99), iter = 20000)
+m0.1 <- sampling(rick1, data = dat, control = ctrl, iter = 4000)
 print(m0.1, pars = c("alpha", "beta", "sigma_obs"))
 
-m1 <- stan("ricker_auto.stan", data = dat, control = list(adapt_delta = 0.99))
-print(m1, pars = c("alpha", "beta", "sigma_obs", "rho"))
+m1 <- stan("ricker_auto.stan", data = dat, control = ctrl)
+print(m1, pars = pars)
 
-m2 <- stan("ricker_auto1.stan", data = dat, control = list(adapt_delta = 0.99))
-print(m2, pars = c("alpha", "beta", "sigma_obs", "rho"))
+m2 <- stan("ricker_auto1.stan", data = dat, control = ctrl)
+print(m2, pars = pars)
 
-m3 <- stan("ricker_auto2.stan", data = dat, control = list(adapt_delta = 0.99))
-print(m3, pars = c("alpha", "beta", "sigma_obs", "rho"))
+m3 <- stan("ricker_auto2.stan", data = dat, control = ctrl)
+print(m3, pars = pars)
 
-m4 <- stan("ricker_auto3.stan", data = dat, control = list(adapt_delta = 0.99))
-print(m4, pars = c("alpha", "beta", "sigma_obs", "rho", "Smsy", "umsy"))
-
-ricker_auto3 <- stan_model("ricker_auto3.stan")
+m4 <- stan("ricker_auto3.stan", data = dat, control = ctrl, iter = 4000)
+print(m4, pars = pars)
 
 # MAP estimate agrees with the CH TMB version!
+ricker_auto3 <- stan_model("ricker_auto3.stan")
 m4_map <- optimizing(ricker_auto3,
   data = dat,
   init = list(alpha = a_srm, beta = b_srm, sigma_obs = 0.8, rho = 0.3)
@@ -54,10 +58,28 @@ m4_map$par["beta"]
 m4_map$par["sigma_obs"]
 m4_map$par["rho"]
 
-bayesplot::mcmc_combo(m4, pars = c("alpha", "beta", "sigma_obs", "rho"))
-bayesplot::mcmc_combo(m2, pars = c("alpha", "beta", "sigma_obs", "rho"))
+m5 <- stan("ricker_auto4.stan", data = dat, control = ctrl, iter = 4000)
+print(m5, pars = pars)
 
-p <- extract(m4)
+m6 <- stan("ricker_auto5.stan", data = c(dat, use_ar1 = 1), control = ctrl, iter = 4000)
+print(m6, pars = pars)
+
+m7 <- stan("ricker_auto5.stan", data = c(dat, use_ar1 = 0), control = ctrl, iter = 4000)
+print(m7, pars = pars)
+
+models <- list(thorson_literal = m1, holt_wor = m4, sr_ar1 = m6, sr_iid = m7)
+
+post <- purrr::map_dfr(models,
+  ~tidybayes::gather_draws(.x, alpha, beta, sigma_obs, rho), .id = "model") %>%
+  filter(!(.variable == "rho" & model == "sr_iid"))
+
+ggplot(post, aes(.value, fill = model, colour = model)) + geom_density(alpha = 0.25) +
+  facet_wrap(~.variable, scales = "free") +
+  theme_light() +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_colour_brewer(palette = "Dark2")
+
+p <- extract(m5)
 S <- seq(min(SR$S_adj), max(SR$S_adj), length.out = 100)
 R_hat <- matrix(ncol = length(S), nrow = 400)
 for (i in seq_len(nrow(R_hat))) {
@@ -71,9 +93,7 @@ points(SR$S_adj, SR$R)
 # PPD:
 SR <- mutate(SR, obs = as.factor(seq_len(n())))
 
-library(dplyr)
-library(ggplot2)
-tidybayes::gather_draws(m4, ppd_obs_logR[obs]) %>%
+tidybayes::gather_draws(m5, ppd_obs_logR[obs]) %>%
   mutate(R_ppd = exp(.value)) %>%
   ggplot(aes(as.factor(obs), log(R_ppd))) + geom_violin() +
   geom_point(data = SR, mapping = aes(x = obs, y = log(R))) +
@@ -105,6 +125,7 @@ make_ppd_plot <- function(model) {
 }
 make_ppd_plot(m2)
 make_ppd_plot(m4)
+make_ppd_plot(m5)
 
 tidybayes::spread_draws(m4, rho, sigma_obs) %>%
   filter(.iteration %in% DRAWS, .chain == 1) %>%

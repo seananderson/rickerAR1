@@ -1,0 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*cache*
+*.png
+*.rds
+*.html
+*.o
+*.so
+*.cpp
+Ricker_autocorr_TMB.R

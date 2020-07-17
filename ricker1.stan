@@ -17,7 +17,7 @@ transformed parameters {
 model {
   obs_logR ~ normal(log(obs_S) + L_hat, sigma_obs);
   // priors:
-  sigma_obs ~ normal(0, 10);
-  alpha ~ normal(0, 50);
-  beta ~ normal(0, 50);
+  sigma_obs ~ normal(0, 3);
+  alpha ~ normal(0, 10);
+  beta ~ normal(0, 10);
 }
