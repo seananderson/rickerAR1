@@ -1,3 +1,3 @@
 # rickerAR1
 
-See [ricker-ar1.Rmd](ricker-ar1.Rmd).
+Experimentations with Ricker models with AR1 residuals coded in Stan. Note that some of the models are intentionally wrong. See See [ricker-ar1.Rmd](ricker-ar1.Rmd).
